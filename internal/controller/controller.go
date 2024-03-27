@@ -9,6 +9,7 @@ import (
     "google.golang.org/grpc/status"
     "google.golang.org/protobuf/proto"
     "google.golang.org/protobuf/types/known/timestamppb"
+    "strings"
 )
 
 type Controller struct {
@@ -29,7 +30,26 @@ func (s *Controller) ClientUpdate(ctx context.Context, req *pb.ClientUpdateReque
         Action:    req.Action,
         UpdatedAt: timestamppb.Now(),
     }
-    err = s.rdb.HSet(ctx, config.RedisKeyClient, req.PlayerId, &update)
+    err = s.rdb.HSet(ctx, config.KeyPresence, config.FieldPrefixClient+req.PlayerId, &update)
+    if err != nil {
+        core.Log.Println(err)
+    }
+    return
+}
+
+func (s *Controller) ServerUpdate(ctx context.Context, req *pb.ServerUpdateRequest) (resp *pb.ServerUpdateResponse, err error) {
+    if len(req.PlayerIds) == 0 || req.Map == "" {
+        err = status.Error(codes.InvalidArgument, "Invalid request arguments")
+        return
+    }
+    updates := map[string]interface{}{}
+    for _, playerId := range req.PlayerIds {
+        updates[config.FieldPrefixServer+playerId] = &pb.ServerPresence{
+            Map:       req.Map,
+            UpdatedAt: timestamppb.Now(),
+        }
+    }
+    err = s.rdb.HSet(ctx, config.KeyPresence, updates)
     if err != nil {
         core.Log.Println(err)
     }
@@ -41,82 +61,67 @@ func (s *Controller) ListPlayer(ctx context.Context, req *pb.ListPlayerRequest) 
         err = status.Error(codes.InvalidArgument, "Invalid request arguments")
         return
     }
+    var fields []string
+    for _, playerId := range req.GetPlayerIds() {
+        fields = append(fields, config.FieldPrefixServer+playerId, config.FieldPrefixClient+playerId)
+    }
     // Get Server Presence values
-    results, err := s.rdb.HMGet(ctx, config.RedisKeyServer, req.PlayerIds...)
+    results, err := s.rdb.HMGet(ctx, config.KeyPresence, fields...)
     if err != nil {
         core.Log.Println(err)
         return
     }
     resp = &pb.ListPlayerResponse{Players: make(map[string]*pb.Player)}
-    for playerId, item := range results {
-        p := new(pb.ServerPresence)
-        err = proto.Unmarshal([]byte(item.(string)), p)
-        if err != nil {
-            core.Log.Println(err)
+    for field, item := range results {
+        parts := strings.Split(field, ":")
+        prefix := parts[0]
+        playerId := parts[1]
+        switch prefix + ":" {
+        case config.FieldPrefixServer:
+            p := new(pb.ServerPresence)
+            err = proto.Unmarshal([]byte(item.(string)), p)
+            if err != nil {
+                core.Log.Println(err)
+                continue
+            }
+            state := pb.GetPlayerState(p.UpdatedAt)
+            if state == pb.PlayerState_Offline {
+                continue
+            }
+            resp.Players[playerId] = &pb.Player{
+                State:     state,
+                Map:       p.Map,
+                UpdatedAt: p.UpdatedAt,
+            }
             continue
-        }
-        state := pb.GetPlayerState(p.UpdatedAt)
-        if state == pb.PlayerState_Offline {
-            continue
-        }
-        resp.Players[playerId] = &pb.Player{
-            State:     state,
-            Map:       p.Map,
-            UpdatedAt: p.UpdatedAt,
+        case config.FieldPrefixClient:
+            var (
+                presence *pb.Player
+                hasItem  bool
+            )
+            p := new(pb.ClientPresence)
+            err = proto.Unmarshal([]byte(item.(string)), p)
+            if err != nil {
+                core.Log.Println(err)
+                continue
+            }
+            if presence, hasItem = resp.Players[playerId]; !hasItem {
+                // We could choose to return player with empty Server Map value
+                core.Log.Printf("WARNING: Missing Server presence for %s", playerId)
+                continue
+            }
+            state := pb.GetPlayerState(p.UpdatedAt)
+            if p.UpdatedAt.AsTime().After(presence.UpdatedAt.AsTime()) {
+                // Client update is more recent
+                presence.UpdatedAt = p.UpdatedAt
+                presence.State = state
+            }
+            if presence.State == pb.PlayerState_Offline {
+                return
+            }
+            presence.Action = p.Action
         }
     }
-    // Get Client Presence values
-    results, err = s.rdb.HMGet(ctx, config.RedisKeyClient, req.PlayerIds...)
-    if err != nil {
-        core.Log.Println(err)
-        return
-    }
-    // merge data between client and server presence values
-    for playerId, item := range results {
-        var (
-            presence *pb.Player
-            hasItem  bool
-        )
-        if presence, hasItem = resp.Players[playerId]; !hasItem {
-            // We could choose to return player with empty Server Map value
-            core.Log.Printf("WARNING: Missing Server presence for %s", playerId)
-            continue
-        }
-        p := new(pb.ClientPresence)
-        err = proto.Unmarshal([]byte(item.(string)), p)
-        if err != nil {
-            core.Log.Println(err)
-            continue
-        }
-        state := pb.GetPlayerState(p.UpdatedAt)
-        if p.UpdatedAt.AsTime().After(presence.UpdatedAt.AsTime()) {
-            // Client update is more recent
-            presence.UpdatedAt = p.UpdatedAt
-            presence.State = state
-        }
-        if presence.State == pb.PlayerState_Offline {
-            return
-        }
-        presence.Action = p.Action
-    }
-    return
-}
 
-func (s *Controller) ServerUpdate(ctx context.Context, req *pb.ServerUpdateRequest) (resp *pb.ServerUpdateResponse, err error) {
-    if len(req.PlayerIds) == 0 || req.Map == "" {
-        err = status.Error(codes.InvalidArgument, "Invalid request arguments")
-        return
-    }
-    updates := map[string]interface{}{}
-    for _, i := range req.PlayerIds {
-        updates[i] = &pb.ServerPresence{
-            Map:       req.Map,
-            UpdatedAt: timestamppb.Now(),
-        }
-    }
-    err = s.rdb.HSet(ctx, config.RedisKeyServer, updates)
-    if err != nil {
-        core.Log.Println(err)
-    }
     return
 }

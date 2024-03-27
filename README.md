@@ -6,18 +6,18 @@ Stored in Redis
 
 `ServerUpdate` will update the players in one HSET command
 ```
-HSET presence:server playerId1 {data} playerId2 {data}
+HSET presence server:playerId1 {data} server:playerId2 {data}
 ```
 
 `ClientUpdate` will update the players in one HSET command
 ```
-HSET presence:client playerId1 {data} playerId2 {data}
+HSET presence client:playerId1 {data} client:playerId2 {data}
 ```
 
-`ListPlayers` will fetch both HSET and merge data into one map.
+`ListPlayers` will fetch data with one HMGET using 2 fields per playerId:
 ```
-HMGet presence:server playerId1 playerId2
-HMGet presence:client playerId1 playerId2
+HMGET presence client:playerId1 client:playerId2 server:playerId1 server:playerId2
 ```
+Then we merge the results from client/server into one object per player.
 
-If 2 calls to Redis becomes an issue, it can be made in one single op using a Lua script.
+
