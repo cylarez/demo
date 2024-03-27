@@ -9,6 +9,7 @@ import (
     "google.golang.org/grpc/status"
     "google.golang.org/protobuf/proto"
     "google.golang.org/protobuf/types/known/timestamppb"
+    "sort"
     "strings"
 )
 
@@ -38,13 +39,14 @@ func (s *Controller) ClientUpdate(ctx context.Context, req *pb.ClientUpdateReque
 }
 
 func (s *Controller) ServerUpdate(ctx context.Context, req *pb.ServerUpdateRequest) (resp *pb.ServerUpdateResponse, err error) {
-    if len(req.PlayerIds) == 0 || req.Map == "" {
+    if len(req.PlayerIds) == 0 || req.Map == "" || req.ServerId == "" {
         err = status.Error(codes.InvalidArgument, "Invalid request arguments")
         return
     }
     updates := map[string]interface{}{}
     for _, playerId := range req.PlayerIds {
         updates[config.FieldPrefixServer+playerId] = &pb.ServerPresence{
+            ServerId:  req.ServerId,
             Map:       req.Map,
             UpdatedAt: timestamppb.Now(),
         }
@@ -71,8 +73,18 @@ func (s *Controller) ListPlayer(ctx context.Context, req *pb.ListPlayerRequest) 
         core.Log.Println(err)
         return
     }
+    // Sort to ensure Server presence comes first
+    var keys []string
+    for key := range results {
+        keys = append(keys, key)
+    }
+    sort.SliceStable(keys, func(i, j int) bool {
+        return keys[i] > keys[j]
+    })
+
     resp = &pb.ListPlayerResponse{Players: make(map[string]*pb.Player)}
-    for field, item := range results {
+    for _, field := range keys {
+        item := results[field]
         parts := strings.Split(field, ":")
         prefix := parts[0]
         playerId := parts[1]
@@ -90,6 +102,7 @@ func (s *Controller) ListPlayer(ctx context.Context, req *pb.ListPlayerRequest) 
             }
             resp.Players[playerId] = &pb.Player{
                 State:     state,
+                ServerId:  p.ServerId,
                 Map:       p.Map,
                 UpdatedAt: p.UpdatedAt,
             }
@@ -99,8 +112,8 @@ func (s *Controller) ListPlayer(ctx context.Context, req *pb.ListPlayerRequest) 
                 presence *pb.Player
                 hasItem  bool
             )
-            p := new(pb.ClientPresence)
-            err = proto.Unmarshal([]byte(item.(string)), p)
+            clientPresence := new(pb.ClientPresence)
+            err = proto.Unmarshal([]byte(item.(string)), clientPresence)
             if err != nil {
                 core.Log.Println(err)
                 continue
@@ -110,16 +123,16 @@ func (s *Controller) ListPlayer(ctx context.Context, req *pb.ListPlayerRequest) 
                 core.Log.Printf("WARNING: Missing Server presence for %s", playerId)
                 continue
             }
-            state := pb.GetPlayerState(p.UpdatedAt)
-            if p.UpdatedAt.AsTime().After(presence.UpdatedAt.AsTime()) {
+            state := pb.GetPlayerState(clientPresence.UpdatedAt)
+            if clientPresence.UpdatedAt.AsTime().After(presence.UpdatedAt.AsTime()) {
                 // Client update is more recent
-                presence.UpdatedAt = p.UpdatedAt
+                presence.UpdatedAt = clientPresence.UpdatedAt
                 presence.State = state
             }
             if presence.State == pb.PlayerState_Offline {
                 return
             }
-            presence.Action = p.Action
+            presence.Action = clientPresence.Action
         }
     }
 

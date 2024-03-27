@@ -14,15 +14,17 @@ service Presence {
 
 // Server Update
 message ServerUpdateRequest {
-  string map = 1;
-  repeated string playerIds = 2;
+  string serverId = 1;
+  string map = 2;
+  repeated string playerIds = 3;
 }
 message ServerUpdateResponse {}
 
 // Saved in Redis after ServerUpdate
 message ServerPresence {
-  string map = 1;
-  google.protobuf.Timestamp updatedAt = 2;
+  string serverId = 1;
+  string map = 2;
+  google.protobuf.Timestamp updatedAt = 3;
 }
 
 // Client Update
@@ -55,6 +57,7 @@ enum PlayerState {
 message Player {
   PlayerState state = 1;
   string action = 2;
-  string map = 3;
-  google.protobuf.Timestamp updatedAt = 4;
+  string serverId = 3;
+  string map = 4;
+  google.protobuf.Timestamp updatedAt = 5;
 }
