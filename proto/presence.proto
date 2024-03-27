@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+option go_package = "demo-1/presence";
+import "google/protobuf/timestamp.proto";
+
+package presence;
+
+// The greeting service definition.
+service Presence {
+  rpc ServerUpdate (ServerUpdateRequest) returns (ServerUpdateResponse) {}
+  rpc ClientUpdate (ClientUpdateRequest) returns (ClientUpdateResponse) {}
+  rpc ListPlayer (ListPlayerRequest) returns (ListPlayerResponse) {}
+}
+
+// Server Update
+message ServerUpdateRequest {
+  string map = 1;
+  repeated string playerIds = 2;
+}
+message ServerUpdateResponse {}
+
+// Saved in Redis after ServerUpdate
+message ServerPresence {
+  string map = 1;
+  google.protobuf.Timestamp updatedAt = 2;
+}
+
+// Client Update
+message ClientUpdateRequest {
+  string playerId = 1;
+  string action = 2;
+}
+message ClientUpdateResponse {}
+
+// Saved in Redis after ClientUpdate
+message ClientPresence {
+  string action = 1;
+  google.protobuf.Timestamp updatedAt = 2;
+}
+
+// List PLayers
+message ListPlayerRequest {
+  repeated string playerIds = 1;
+}
+message ListPlayerResponse {
+  map<string, Player> players = 1;
+}
+
+enum PlayerState {
+  Offline = 0;
+  Idle = 1;
+  Online = 2;
+}
+
+message Player {
+  PlayerState state = 1;
+  string action = 2;
+  string map = 3;
+  google.protobuf.Timestamp updatedAt = 4;
+}
